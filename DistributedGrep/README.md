@@ -6,19 +6,22 @@ A distributed log querying system that performs parallel grep operations across 
 
 ```
 ┌─────────┐       ┌──────────┐
-│         │──────▶│ Server 1 │──▶ machine.1.log
+│         │──────▶│ Server 1 │──▶ machine.1.log   (port 3491)
 │         │       └──────────┘
 │         │       ┌──────────┐
-│ Client  │──────▶│ Server 2 │──▶ machine.2.log
+│         │──────▶│ Server 2 │──▶ machine.2.log   (port 3492)
+│         │       └──────────┘
+│ Client  │       ┌──────────┐
+│         │──────▶│   ...    │
 │         │       └──────────┘
 │         │       ┌──────────┐
-│         │──────▶│ Server 3 │──▶ machine.3.log
+│         │──────▶│Server 10 │──▶ machine.10.log  (port 3500)
 └─────────┘       └──────────┘
 ```
 
 **Client (`client.py`):**
 - Reads server configuration from `config.json`
-- Sends grep queries to all servers in parallel using thread pools
+- Sends grep queries to all 10 servers in parallel using thread pools
 - Collects and aggregates results
 - Displays matching lines and statistics
 
@@ -31,86 +34,90 @@ A distributed log querying system that performs parallel grep operations across 
 
 ```
 DistributedGrep/
-├── client.py       # Client that queries all servers
-├── server.py       # Server that handles grep requests
-├── config.json     # Configuration for servers and log files
-├── logs/           # Directory for log files (create for testing)
+├── client.py           # Client that queries all servers
+├── server.py           # Server that handles grep requests
+├── config.json         # Configuration for 10 servers
+├── start_servers.py    # Helper script to start all servers
+├── generate_logs.py    # Helper script to generate test logs
+├── logs/               # Directory for log files
 │   ├── machine.1.log
 │   ├── machine.2.log
-│   └── machine.3.log
+│   └── ...
+│   └── machine.10.log
 └── README.md
 ```
 
 ## Configuration
 
-The `config.json` file defines the servers to query:
+The `config.json` file defines 10 servers (ports 3491-3500):
 
 ```json
 {
     "vms": [
-        {
-            "id": 1,
-            "hostname": "localhost",
-            "ip": "127.0.0.1",
-            "port": 3491,
-            "log_file": "logs/machine.1.log"
-        },
-        {
-            "id": 2,
-            "hostname": "localhost",
-            "ip": "127.0.0.1",
-            "port": 3492,
-            "log_file": "logs/machine.2.log"
-        },
-        {
-            "id": 3,
-            "hostname": "localhost",
-            "ip": "127.0.0.1",
-            "port": 3493,
-            "log_file": "logs/machine.3.log"
-        }
+        {"id": 1, "hostname": "localhost", "ip": "127.0.0.1", "port": 3491, "log_file": "logs/machine.1.log"},
+        {"id": 2, "hostname": "localhost", "ip": "127.0.0.1", "port": 3492, "log_file": "logs/machine.2.log"},
+        ...
+        {"id": 10, "hostname": "localhost", "ip": "127.0.0.1", "port": 3500, "log_file": "logs/machine.10.log"}
     ]
 }
 ```
 
 Each server entry contains:
-- `id`: Unique identifier for the server
+- `id`: Unique identifier for the server (1-10)
 - `hostname`: Hostname (used for distributed deployments)
 - `ip`: IP address to connect to
-- `port`: Port number the server listens on
+- `port`: Port number the server listens on (3491-3500)
 - `log_file`: Path to the log file to search
 
-## Local Testing
+## Quick Start (Local Testing)
 
-### 1. Create Test Log Files
+### Option 1: Using Helper Scripts
 
+```bash
+# 1. Generate test log files
+python generate_logs.py
+
+# 2. Start all 10 servers (runs in background)
+python start_servers.py
+
+# 3. Run queries
+python client.py "ERROR"
+
+# 4. Stop all servers when done
+python start_servers.py --stop
+```
+
+### Option 2: Manual Setup
+
+#### 1. Generate Test Log Files
+
+```bash
+python generate_logs.py
+```
+
+Or manually:
 ```bash
 mkdir -p logs
-
-echo -e "INFO: Server started\nERROR: Connection failed\nINFO: Request received\nWARN: High latency detected" > logs/machine.1.log
-
-echo -e "INFO: Database connected\nERROR: Query timeout\nINFO: Cache hit\nERROR: Disk full" > logs/machine.2.log
-
-echo -e "INFO: User logged in\nWARN: Invalid token\nINFO: Session created\nERROR: Authentication failed" > logs/machine.3.log
+for i in {1..10}; do
+    echo -e "INFO: Server $i started\nERROR: Connection failed on server $i\nWARN: High latency\nINFO: Request processed" > logs/machine.$i.log
+done
 ```
 
-### 2. Start the Servers
+#### 2. Start the Servers
 
-Open three separate terminals and run:
+Open 10 separate terminals and run:
 
-**Terminal 1:**
 ```bash
+# Terminal 1
 python server.py --vm-id 1
-```
 
-**Terminal 2:**
-```bash
+# Terminal 2
 python server.py --vm-id 2
-```
 
-**Terminal 3:**
-```bash
-python server.py --vm-id 3
+# ... continue for all 10 servers
+
+# Terminal 10
+python server.py --vm-id 10
 ```
 
 Each server will print:
@@ -119,9 +126,9 @@ Server VM1 listening on port 3491
 Log file: logs/machine.1.log
 ```
 
-### 3. Run Grep Queries
+#### 3. Run Grep Queries
 
-In a fourth terminal, run queries:
+In another terminal:
 
 ```bash
 # Search for ERROR in all logs
@@ -160,25 +167,33 @@ Options:
 Executing grep: pattern='ERROR' options=''
 ------------------------------------------------------------
 
-logs/machine.1.log:ERROR: Connection failed
-logs/machine.2.log:ERROR: Query timeout
-logs/machine.2.log:ERROR: Disk full
-logs/machine.3.log:ERROR: Authentication failed
+logs/machine.1.log:ERROR: Connection failed on server 1
+logs/machine.2.log:ERROR: Connection failed on server 2
+logs/machine.3.log:ERROR: Connection failed on server 3
+...
+logs/machine.10.log:ERROR: Connection failed on server 10
 
 Line counts:
-machine.1.log:      1
-machine.2.log:      2
-machine.3.log:      1
+machine.1.log:       1
+machine.2.log:       1
+machine.3.log:       1
+machine.4.log:       1
+machine.5.log:       1
+machine.6.log:       1
+machine.7.log:       1
+machine.8.log:       1
+machine.9.log:       1
+machine.10.log:      1
 
-Sum of line counts: 4
-Successful VMs: 3/3
+Sum of line counts: 10
+Successful VMs: 10/10
 
-Query completed in 0.015 seconds
+Query completed in 0.025 seconds
 ```
 
 ## Distributed Deployment
 
-For deployment across multiple machines:
+For deployment across multiple physical/virtual machines:
 
 1. Update `config.json` with actual hostnames/IPs:
 

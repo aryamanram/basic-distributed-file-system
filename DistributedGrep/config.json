@@ -20,6 +20,55 @@
             "ip": "127.0.0.1",
             "port": 3493,
             "log_file": "logs/machine.3.log"
+        },
+        {
+            "id": 4,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3494,
+            "log_file": "logs/machine.4.log"
+        },
+        {
+            "id": 5,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3495,
+            "log_file": "logs/machine.5.log"
+        },
+        {
+            "id": 6,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3496,
+            "log_file": "logs/machine.6.log"
+        },
+        {
+            "id": 7,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3497,
+            "log_file": "logs/machine.7.log"
+        },
+        {
+            "id": 8,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3498,
+            "log_file": "logs/machine.8.log"
+        },
+        {
+            "id": 9,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3499,
+            "log_file": "logs/machine.9.log"
+        },
+        {
+            "id": 10,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3500,
+            "log_file": "logs/machine.10.log"
         }
     ]
 }
