@@ -1,0 +1,25 @@
+{
+    "vms": [
+        {
+            "id": 1,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3491,
+            "log_file": "logs/machine.1.log"
+        },
+        {
+            "id": 2,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3492,
+            "log_file": "logs/machine.2.log"
+        },
+        {
+            "id": 3,
+            "hostname": "localhost",
+            "ip": "127.0.0.1",
+            "port": 3493,
+            "log_file": "logs/machine.3.log"
+        }
+    ]
+}
