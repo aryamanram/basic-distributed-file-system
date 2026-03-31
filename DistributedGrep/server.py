@@ -44,14 +44,13 @@ def handle_client(conn, addr, vm_config):
         log_file = vm_config['log_file']
 
         try:
+            cmd = ['grep']
             if grep_options:
-                cmd = f"grep {grep_options} '{grep_pattern}' {log_file}"
-            else:
-                cmd = f"grep '{grep_pattern}' {log_file}"
+                cmd.extend(grep_options.split())
+            cmd.extend([grep_pattern, log_file])
 
             result = subprocess.run(
                 cmd,
-                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=30

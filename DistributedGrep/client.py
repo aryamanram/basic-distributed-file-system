@@ -108,14 +108,14 @@ def run_grep(pattern, options='', verbose=False):
                 if verbose:
                     print(f"VM{vm['id']}: No response")
 
-    print("\n")
+    print()
 
     for result in sorted(results, key=lambda x: x['vm_id']):
         if result['lines']:
             for line in result['lines']:
                 print(line)
 
-    print("\n")
+    print()
 
     print("Line counts:")
     for vm_id in sorted(vm_counts.keys()):

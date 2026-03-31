@@ -92,7 +92,8 @@ def main():
 
         print(f"  Created {log_file} (100 lines)")
 
-    print("\nDone! Generated 10 log files in logs/ directory.")
+    total_lines = 10 * 100
+    print(f"\nDone! Generated 10 log files in logs/ directory ({total_lines} lines total).")
     print("\nSample queries to try:")
     print("  python client.py 'ERROR'")
     print("  python client.py -i 'connection'")
