@@ -7,7 +7,7 @@ A collection of distributed systems projects demonstrating core concepts in faul
 | # | Project | Concepts | Status |
 |---|---------|----------|--------|
 | 1 | [Distributed Grep](DistributedGrep/) | Client-server architecture, parallel querying, socket programming, fault-tolerant aggregation | Complete |
-| 2 | Membership Protocol | Failure detection, gossip protocol, heartbeating, group membership | Coming soon |
+| 2 | [Membership Protocol](MembershipProtocol/) | Failure detection, gossip protocol, heartbeating, group membership | Complete |
 | 3 | HyDFS (Distributed File System) | Consistent hashing, replication, eventual consistency, re-balancing | Coming soon |
 | 4 | Rainstorm (Stream Processing) | Stream processing, operator chaining, exactly-once semantics | Coming soon |
 

@@ -1,0 +1,3 @@
+logs/*.log
+.node_pids.json
+__pycache__/

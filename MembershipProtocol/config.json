@@ -1,0 +1,15 @@
+{
+    "nodes": [
+        {"id": 1, "ip": "127.0.0.1", "membership_port": 8081, "control_port": 9091},
+        {"id": 2, "ip": "127.0.0.1", "membership_port": 8082, "control_port": 9092},
+        {"id": 3, "ip": "127.0.0.1", "membership_port": 8083, "control_port": 9093},
+        {"id": 4, "ip": "127.0.0.1", "membership_port": 8084, "control_port": 9094},
+        {"id": 5, "ip": "127.0.0.1", "membership_port": 8085, "control_port": 9095}
+    ],
+    "introducer_id": 1,
+    "gossip_interval": 0.5,
+    "pingack_interval": 0.5,
+    "failure_timeout": 15.0,
+    "suspicion_timeout": 10.0,
+    "cleanup_timeout": 10.0
+}
