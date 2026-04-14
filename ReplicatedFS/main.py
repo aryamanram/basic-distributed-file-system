@@ -497,12 +497,12 @@ def handle_control_connection(conn, addr, client, logger):
         logger.log(f"CONTROL ERROR: Handle: {e}")
         try:
             conn.sendall(f"Error: {e}".encode('utf-8'))
-        except:
+        except Exception:
             pass
     finally:
         try:
             conn.close()
-        except:
+        except Exception:
             pass
 
 

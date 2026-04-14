@@ -59,7 +59,7 @@ class NetworkManager:
         if self.server_socket:
             try:
                 self.server_socket.close()
-            except:
+            except Exception:
                 pass
 
         self.logger.log("NETWORK: Server stopped")
@@ -117,7 +117,7 @@ class NetworkManager:
         finally:
             try:
                 conn.close()
-            except:
+            except Exception:
                 pass
 
     def send_message(self, target_host: str, target_port: int,

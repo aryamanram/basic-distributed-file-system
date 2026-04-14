@@ -269,7 +269,7 @@ Tests cover:
 
 - Python 3.6+
 - No external dependencies (uses only the standard library)
-- Requires the sibling [MembershipProtocol](../MembershipProtocol) directory
+- Requires the sibling [MembershipProtocol](../MembershipProtocol) directory — ReplicatedFS imports `MembershipService` from it at runtime. If you see `ModuleNotFoundError: No module named 'membership'`, ensure the `MembershipProtocol/` directory exists alongside `ReplicatedFS/` in the same parent folder.
 
 ## Credits
 

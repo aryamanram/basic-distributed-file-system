@@ -114,7 +114,7 @@ class ReplicationManager:
 
             response = self.node_manager.network.send_message(hostname, port, message, timeout=5.0)
             return response and response.get('exists', False)
-        except:
+        except Exception:
             return False
 
     def _fetch_file_from_replica(self, filename: str, replica_nodes: List[str]):

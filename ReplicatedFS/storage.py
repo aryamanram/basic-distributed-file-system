@@ -103,7 +103,8 @@ class FileStorage:
 
                     self.files[file_id] = blocks
                 except Exception as e:
-                    print(f"Error loading file {file_id}: {e}")
+                    import sys
+                    print(f"Error loading file {file_id}: {e}", file=sys.stderr)
 
     def _save_metadata(self, file_id: str):
         """Save file metadata to disk."""

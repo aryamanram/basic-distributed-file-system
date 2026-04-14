@@ -55,8 +55,8 @@ class ReplicatedFSNode:
         self.membership = MembershipService(node_id)
 
         # Use membership timestamp for node_id (matches _monitor_membership format)
-        mp2_timestamp = self.membership.member_id.split('_')[0]
-        self.node_id = f"{self.hostname}:{self.port}:{mp2_timestamp}"
+        membership_timestamp = self.membership.member_id.split('_')[0]
+        self.node_id = f"{self.hostname}:{self.port}:{membership_timestamp}"
 
         # Initialize storage
         storage_dir = f"rfs_storage_{node_id}"
