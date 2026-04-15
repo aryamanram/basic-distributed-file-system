@@ -4,9 +4,9 @@ StreamProcess - Stream Processing Framework
 Main entry point and Leader coordination
 
 Usage:
-  Terminal 1 (VM1): python3 streamprocess.py --vm-id 1 --leader
-  Terminal 2-10:    python3 streamprocess.py --vm-id N
-  Terminal on VM1:  python3 streamprocess.py --submit --nstages 2 --ntasks 3 ...
+  Terminal 1 (Node 1): python3 streamprocess.py --vm-id 1 --leader
+  Terminal 2+:        python3 streamprocess.py --vm-id N
+  Submit job:         python3 streamprocess.py --submit --nstages 2 --ntasks 3 ...
 """
 import argparse
 import json
@@ -39,15 +39,29 @@ def _load_config() -> dict:
 
 _CONFIG = _load_config()
 
-# Build node host mapping from config
+# Build node host and port mappings from config
 NODE_HOSTS = {}
+NODE_STREAM_PORTS = {}
+NODE_TASK_BASE_PORTS = {}
 for _node in _CONFIG['nodes']:
     NODE_HOSTS[_node['id']] = _node['ip']
+    NODE_STREAM_PORTS[_node['id']] = _node.get('stream_port', 8001)
+    NODE_TASK_BASE_PORTS[_node['id']] = _node.get('task_base_port', 8101)
 
-# Ports and limits
-STREAM_PORT = _CONFIG['nodes'][0].get('stream_port', 8001)
-TASK_BASE_PORT = _CONFIG['nodes'][0].get('task_base_port', 8101)
 MAX_TASKS_PER_STAGE = _CONFIG.get('max_tasks_per_stage', 10)
+
+
+def get_stream_port(node_id: int) -> int:
+    """Get the stream processing port for a given node."""
+    return NODE_STREAM_PORTS.get(node_id, 8001)
+
+
+def get_stream_port_by_host(hostname: str) -> int:
+    """Get the stream processing port for a node identified by hostname/IP."""
+    for nid, host in NODE_HOSTS.items():
+        if host == hostname:
+            return NODE_STREAM_PORTS.get(nid, 8001)
+    return 8001
 
 
 def get_node_id_from_hostname(hostname: str) -> int:
@@ -57,19 +71,20 @@ def get_node_id_from_hostname(hostname: str) -> int:
             return node_id
     return 1
 
-def get_task_port(stage: int, task_idx: int) -> int:
-    """Calculate the port for a task based on stage and task index.
+def get_task_port(stage: int, task_idx: int, node_id: int = 1) -> int:
+    """Calculate the port for a task based on stage, task index, and node.
 
     This ensures tasks in different stages don't collide on the same port.
-    Port = TASK_BASE_PORT + (stage * MAX_TASKS_PER_STAGE) + task_idx
+    Port = task_base_port + (stage * MAX_TASKS_PER_STAGE) + task_idx
 
-    Examples:
-      Stage 0, Task 0 -> 8100
-      Stage 0, Task 1 -> 8101
-      Stage 1, Task 0 -> 8110
-      Stage 1, Task 1 -> 8111
+    Examples (node 1, base 8101):
+      Stage 0, Task 0 -> 8101
+      Stage 0, Task 1 -> 8102
+      Stage 1, Task 0 -> 8111
+      Stage 1, Task 1 -> 8112
     """
-    return TASK_BASE_PORT + (stage * MAX_TASKS_PER_STAGE) + task_idx
+    base = NODE_TASK_BASE_PORTS.get(node_id, 8101)
+    return base + (stage * MAX_TASKS_PER_STAGE) + task_idx
 
 def get_timestamp() -> str:
     """Get formatted timestamp."""
@@ -182,13 +197,14 @@ class StreamProcessLeader:
         # Start server for receiving messages
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind(('', STREAM_PORT))
+        self.stream_port = get_stream_port(self.vm_id)
+        self.server_socket.bind(('', self.stream_port))
         self.server_socket.listen(20)
-        
+
         self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
         self.server_thread.start()
-        
-        self.logger.log(f"LEADER: Started on port {STREAM_PORT}")
+
+        self.logger.log(f"LEADER: Started on port {self.stream_port}")
     
     def stop(self):
         """Stop the leader."""
@@ -320,7 +336,7 @@ class StreamProcessLeader:
                 self.tasks[task_id].pid = pid
                 self.tasks[task_id].log_file = log_file
                 task = self.tasks[task_id]
-                self.logger.log(f"TASK START: {task_id} on VM{task.vm_id} PID={pid} "
+                self.logger.log(f"TASK START: {task_id} on Node-{task.vm_id} PID={pid} "
                               f"op={task.op_exe} log={log_file}")
         
         return {'status': 'success'}
@@ -357,14 +373,14 @@ class StreamProcessLeader:
         # Send kill command to the worker
         hostname = NODE_HOSTS.get(vm_id)
         if not hostname:
-            return {'status': 'error', 'message': 'Invalid VM ID'}
+            return {'status': 'error', 'message': 'Invalid node ID'}
         
         try:
             kill_msg = {'type': 'KILL_PROCESS', 'pid': pid}
             response = self._send_to_worker(hostname, kill_msg)
             
             if response and response.get('status') == 'success':
-                self.logger.log(f"TASK KILLED: VM{vm_id} PID={pid}")
+                self.logger.log(f"TASK KILLED: Node-{vm_id} PID={pid}")
                 return {'status': 'success'}
             return {'status': 'error', 'message': 'Kill failed'}
         except Exception as e:
@@ -424,7 +440,7 @@ class StreamProcessLeader:
         return config
 
     def _handle_check_task_local(self, msg: dict) -> dict:
-        """Check if a local task is still running (leader handles this for tasks on its VM)."""
+        """Check if a local task is still running (leader handles this for tasks on its node)."""
         pid = msg.get('pid')
         try:
             os.kill(pid, 0)
@@ -443,7 +459,7 @@ class StreamProcessLeader:
             return {'status': 'success', 'running': False}
 
     def _handle_kill_process_local(self, msg: dict) -> dict:
-        """Kill a local process (leader handles this for tasks on its VM)."""
+        """Kill a local process (leader handles this for tasks on its node)."""
         pid = msg.get('pid')
         try:
             os.kill(pid, 9)
@@ -482,7 +498,7 @@ class StreamProcessLeader:
             if os.path.exists(temp_check):
                 os.remove(temp_check)
             return exists
-        except:
+        except Exception:
             return False
 
     def _handle_write_rfs(self, msg: dict) -> dict:
@@ -540,7 +556,7 @@ class StreamProcessLeader:
                 # Try to cleanup temp file
                 try:
                     os.remove(temp_file)
-                except:
+                except Exception:
                     pass
                 return {'status': 'error', 'message': str(e)}
 
@@ -551,7 +567,7 @@ class StreamProcessLeader:
         """
         Write exactly-once log data to ReplicatedFS on behalf of a task.
 
-        This enables cross-node recovery: when a task restarts on a different VM,
+        This enables cross-node recovery: when a task restarts on a different node,
         it can load its EO log from ReplicatedFS (not just local file).
 
         Strategy:
@@ -606,7 +622,7 @@ class StreamProcessLeader:
                 self.logger.log(f"RFS EO WRITE ERROR: {rfs_filename} - {e}")
                 try:
                     os.remove(temp_file)
-                except:
+                except Exception:
                     pass
                 return {'status': 'error', 'message': str(e)}
 
@@ -645,7 +661,7 @@ class StreamProcessLeader:
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-            except:
+            except Exception:
                 pass
             return {'status': 'error', 'message': str(e)}
 
@@ -654,7 +670,7 @@ class StreamProcessLeader:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
-            sock.connect((hostname, STREAM_PORT))
+            sock.connect((hostname, get_stream_port_by_host(hostname)))
             sock.sendall(json.dumps(msg).encode('utf-8'))
 
             # Read response in chunks for large responses
@@ -701,14 +717,14 @@ class StreamProcessLeader:
             if self.tasks:
                 self.logger.log(f"CLEANUP: Killing {len(self.tasks)} existing tasks from previous job")
 
-                # Group tasks by VM for efficient cleanup
+                # Group tasks by node for efficient cleanup
                 tasks_by_vm: Dict[int, List[TaskInfo]] = {}
                 for task_id, task in self.tasks.items():
                     if task.vm_id not in tasks_by_vm:
                         tasks_by_vm[task.vm_id] = []
                     tasks_by_vm[task.vm_id].append(task)
 
-                # Kill tasks on each VM
+                # Kill tasks on each node
                 for vm_id, vm_tasks in tasks_by_vm.items():
                     for task in vm_tasks:
                         if task.pid > 0:
@@ -722,7 +738,7 @@ class StreamProcessLeader:
                                     hostname = NODE_HOSTS[vm_id]
                                     kill_msg = {'type': 'KILL_PROCESS', 'pid': task.pid}
                                     self._send_to_worker(hostname, kill_msg)
-                                    self.logger.log(f"CLEANUP: Killed remote task {task.task_id} on VM{vm_id} PID={task.pid}")
+                                    self.logger.log(f"CLEANUP: Killed remote task {task.task_id} on Node-{vm_id} PID={task.pid}")
                             except Exception as e:
                                 self.logger.log(f"CLEANUP: Failed to kill {task.task_id}: {e}")
 
@@ -813,7 +829,7 @@ class StreamProcessLeader:
         self._start_source(rfs_src)
     
     def _get_available_workers(self, include_leader: bool = True) -> List[int]:
-        """Get list of available worker VM IDs."""
+        """Get list of available worker node IDs."""
         workers = []
         members = self.rfs_node.membership.membership.get_members()
         
@@ -868,7 +884,7 @@ class StreamProcessLeader:
                         'hostname': NODE_HOSTS[vm_id]
                     })
 
-                self.logger.log(f"SCHEDULED: {task_id} on VM{vm_id}")
+                self.logger.log(f"SCHEDULED: {task_id} on Node-{vm_id}")
 
         # Send start commands to workers
         for task_id, task in self.tasks.items():
@@ -896,7 +912,7 @@ class StreamProcessLeader:
                         sock.settimeout(0.5)
                         sock.connect((hostname, port))
                         sock.close()
-                    except:
+                    except Exception:
                         all_ready = False
                         break
 
@@ -934,7 +950,7 @@ class StreamProcessLeader:
             # Update task info with PID and log_file from worker
             task.pid = response.get('pid', 0)
             task.log_file = response.get('log_file', f"task_{task.task_id}_{self.run_id}.log")
-            self.logger.log(f"TASK STARTED: {task.task_id} on VM{task.vm_id} PID={task.pid}")
+            self.logger.log(f"TASK STARTED: {task.task_id} on Node-{task.vm_id} PID={task.pid}")
         else:
             self.logger.log(f"TASK START FAILED: {task.task_id} - {response}")
     
@@ -1280,10 +1296,10 @@ class StreamProcessLeader:
 
             # Task failed if: no response (worker unreachable) OR task not running
             if response is None:
-                self.logger.log(f"TASK FAILURE DETECTED: {task_id} on VM{task.vm_id} (no response from worker)")
+                self.logger.log(f"TASK FAILURE DETECTED: {task_id} on Node-{task.vm_id} (no response from worker)")
                 failed_tasks.append(task)
             elif not response.get('running', True):
-                self.logger.log(f"TASK FAILURE DETECTED: {task_id} on VM{task.vm_id} (process not running)")
+                self.logger.log(f"TASK FAILURE DETECTED: {task_id} on Node-{task.vm_id} (process not running)")
                 failed_tasks.append(task)
 
         # Restart failed tasks outside the lock
@@ -1291,22 +1307,22 @@ class StreamProcessLeader:
             self._restart_task(task)
 
     def _restart_task(self, task: TaskInfo):
-        """Restart a failed task, possibly on a different VM if original is down."""
+        """Restart a failed task, possibly on a different node if original is down."""
         original_vm = task.vm_id
 
-        # Check if original VM is still available
+        # Check if original node is still available
         workers = self._get_available_workers()
         if original_vm not in workers:
             # Original VM is down, pick a new one
             if workers:
                 new_vm = workers[0]  # Pick first available
-                self.logger.log(f"TASK RESTART: {task.task_id} moving from VM{original_vm} to VM{new_vm}")
+                self.logger.log(f"TASK RESTART: {task.task_id} moving from Node-{original_vm} to Node-{new_vm}")
                 task.vm_id = new_vm
             else:
                 self.logger.log(f"TASK RESTART FAILED: No available workers for {task.task_id}")
                 return
         else:
-            self.logger.log(f"TASK RESTART: {task.task_id} on VM{task.vm_id}")
+            self.logger.log(f"TASK RESTART: {task.task_id} on Node-{task.vm_id}")
 
         # Re-start the task (preserves task_id for exactly-once recovery)
         self._start_task_on_worker(task)
@@ -1419,7 +1435,7 @@ class StreamProcessLeader:
                 sock.close()
                 task_ready = True
                 break
-            except:
+            except Exception:
                 time.sleep(0.2)
 
         if not task_ready:
@@ -1566,7 +1582,7 @@ class StreamProcessLeader:
             hostname = task_info['hostname']
             output_file = os.path.join(task_dir, f"output_{task_id}.txt")
 
-            self.logger.log(f"Fetching output from {task_id} on VM{vm_id}")
+            self.logger.log(f"Fetching output from {task_id} on Node-{vm_id}")
 
             if vm_id == self.vm_id:
                 # Local task - read directly
@@ -1588,11 +1604,11 @@ class StreamProcessLeader:
                     if response and response.get('status') == 'success':
                         lines = response.get('output', [])
                         combined_output.extend([line + '\n' if not line.endswith('\n') else line for line in lines])
-                        self.logger.log(f"  Received {len(lines)} lines from VM{vm_id}")
+                        self.logger.log(f"  Received {len(lines)} lines from Node-{vm_id}")
                     else:
-                        self.logger.log(f"  Failed to get output from VM{vm_id}: {response}")
+                        self.logger.log(f"  Failed to get output from Node-{vm_id}: {response}")
                 except Exception as e:
-                    self.logger.log(f"  Error fetching from VM{vm_id}: {e}")
+                    self.logger.log(f"  Error fetching from Node-{vm_id}: {e}")
 
         # Write combined output to temp file
         if combined_output:
@@ -1642,12 +1658,13 @@ class StreamProcessWorker:
         
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind(('', STREAM_PORT))
+        self.stream_port = get_stream_port(self.vm_id)
+        self.server_socket.bind(('', self.stream_port))
         self.server_socket.listen(20)
-        
+
         threading.Thread(target=self._server_loop, daemon=True).start()
-        
-        self.logger.log(f"WORKER: Started on port {STREAM_PORT}")
+
+        self.logger.log(f"WORKER: Started on port {self.stream_port}")
     
     def stop(self):
         """Stop the worker."""
@@ -1823,7 +1840,7 @@ class StreamProcessWorker:
             if os.path.exists(temp_check):
                 os.remove(temp_check)
             return exists
-        except:
+        except Exception:
             return False
 
     def _handle_write_rfs(self, msg: dict) -> dict:
@@ -1886,7 +1903,7 @@ class StreamProcessWorker:
                 # Try to cleanup temp file
                 try:
                     os.remove(temp_file)
-                except:
+                except Exception:
                     pass
                 return {'status': 'error', 'message': str(e)}
 
@@ -1897,7 +1914,7 @@ class StreamProcessWorker:
         """
         Write exactly-once log data to ReplicatedFS on behalf of a task.
 
-        This enables cross-node recovery: when a task restarts on a different VM,
+        This enables cross-node recovery: when a task restarts on a different node,
         it can load its EO log from ReplicatedFS (not just local file).
 
         Strategy:
@@ -1952,7 +1969,7 @@ class StreamProcessWorker:
                 self.logger.log(f"RFS EO WRITE ERROR: {rfs_filename} - {e}")
                 try:
                     os.remove(temp_file)
-                except:
+                except Exception:
                     pass
                 return {'status': 'error', 'message': str(e)}
 
@@ -1991,7 +2008,7 @@ class StreamProcessWorker:
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-            except:
+            except Exception:
                 pass
             return {'status': 'error', 'message': str(e)}
 
@@ -2025,7 +2042,8 @@ def submit_job(args):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10.0)
-        sock.connect((leader_host, STREAM_PORT))
+        leader_port = get_stream_port(args.leader_vm)
+        sock.connect((leader_host, leader_port))
         sock.sendall(json.dumps(msg).encode('utf-8'))
         response = sock.recv(65536).decode('utf-8')
         sock.close()
@@ -2078,7 +2096,7 @@ def main():
     parser.add_argument('--leader', action='store_true', help='Run as leader')
     parser.add_argument('--submit', action='store_true', help='Submit job to leader')
     parser.add_argument('--get-output', action='store_true', help='Fetch output from ReplicatedFS')
-    parser.add_argument('--leader-vm', type=int, default=1, help='Leader VM ID for job submission')
+    parser.add_argument('--leader-vm', type=int, default=1, help='Leader node ID for job submission')
 
     # Job parameters
     parser.add_argument('--nstages', type=int, help='Number of stages')

@@ -143,11 +143,12 @@ python3 streamprocess.py --vm-id 3
 python3 streamprocess.py --submit \
     --nstages 2 \
     --ntasks 3 \
-    --op1 ./filter_op.py --args1 "Pattern" \
-    --op2 ./count_op.py --args2 "" \
+    --operators "./filter_op.py:Pattern" "./count_op.py:" \
     --src input.csv \
     --dest output.txt
 ```
+
+Operators are specified as `executable:args` pairs. Use an empty args section (`:`) for operators that take no arguments.
 
 ### 4. Monitor and manage
 

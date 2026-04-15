@@ -24,8 +24,28 @@ from typing import Dict, List, Optional, Set, Tuple
 _parent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 sys.path.insert(0, _parent_dir)
 
-STREAM_PORT = 8000
-TASK_BASE_PORT = 8100
+
+def _load_config() -> dict:
+    """Load configuration from config.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
+_CONFIG = _load_config()
+
+# Build per-node port lookups
+_NODE_STREAM_PORTS = {n['id']: n.get('stream_port', 8001) for n in _CONFIG['nodes']}
+_NODE_TASK_BASE_PORTS = {n['id']: n.get('task_base_port', 8101) for n in _CONFIG['nodes']}
+
+
+def get_stream_port(node_id: int) -> int:
+    """Get the stream processing port for a given node."""
+    return _NODE_STREAM_PORTS.get(node_id, 8001)
+
+
+def get_task_base_port(node_id: int) -> int:
+    """Get the task base port for a given node."""
+    return _NODE_TASK_BASE_PORTS.get(node_id, 8101)
 
 
 class ReplicatedFSClientProxy:
@@ -37,12 +57,14 @@ class ReplicatedFSClientProxy:
     worker's WRITE_RFS_EO endpoint, which handles the actual ReplicatedFS operations.
 
     This enables exactly-once semantics to persist EO logs to ReplicatedFS for recovery
-    after task failures, even when tasks restart on different VMs.
+    after task failures, even when tasks restart on different nodes.
     """
 
-    def __init__(self, task_id: str, logger):
+    def __init__(self, task_id: str, logger, vm_id: int = 1):
         self.task_id = task_id
         self.logger = logger
+        self.vm_id = vm_id
+        self.stream_port = get_stream_port(vm_id)
         self.client_id = f"task_{task_id}_{os.getpid()}_{time.time()}"
 
     def create(self, local_filename: str, rfs_filename: str) -> bool:
@@ -70,7 +92,7 @@ class ReplicatedFSClientProxy:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(30.0)
-            sock.connect(('localhost', STREAM_PORT))
+            sock.connect(('localhost', self.stream_port))
 
             msg = {
                 'type': 'READ_RFS_EO',
@@ -122,7 +144,7 @@ class ReplicatedFSClientProxy:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(30.0)
-            sock.connect(('localhost', STREAM_PORT))
+            sock.connect(('localhost', self.stream_port))
 
             msg = {
                 'type': 'WRITE_RFS_EO',
@@ -278,7 +300,7 @@ class ExactlyOnceTracker:
                         if input_tid and seq >= 0:
                             current_max = self.output_seq_max.get(input_tid, -1)
                             self.output_seq_max[input_tid] = max(current_max, seq)
-                    except:
+                    except Exception:
                         pass
 
         # Try to load from ReplicatedFS first (for recovery)
@@ -519,6 +541,7 @@ class StreamProcessTask:
         self.run_id = run_id
         self.vm_id = vm_id
         self.exactly_once = exactly_once
+        self.stream_port = get_stream_port(vm_id)
 
         self.logger = TaskLogger(task_id, run_id, vm_id)
 
@@ -584,11 +607,11 @@ class StreamProcessTask:
 
         # Create ReplicatedFS client proxy for exactly-once log syncing
         # This proxy sends requests to the local worker/leader which has the actual ReplicatedFS node
-        # This enables cross-node recovery: when a task restarts on a different VM,
+        # This enables cross-node recovery: when a task restarts on a different node,
         # it can load its EO log from ReplicatedFS (not just local file)
         self.rfs_node = None
         if self.exactly_once:
-            self.rfs_client = ReplicatedFSClientProxy(self.task_id, self.logger)
+            self.rfs_client = ReplicatedFSClientProxy(self.task_id, self.logger, self.vm_id)
             self.logger.log(f"Created ReplicatedFS proxy client for exactly-once semantics")
         else:
             self.rfs_client = None
@@ -672,7 +695,7 @@ class StreamProcessTask:
             try:
                 self.rfs_node.membership.leave_group()
                 self.rfs_node.stop()
-            except:
+            except Exception:
                 pass
 
         if self.server_socket:
@@ -721,7 +744,8 @@ class StreamProcessTask:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10.0)
-            sock.connect((self.leader_host, STREAM_PORT))
+            leader_port = get_stream_port(_CONFIG.get('leader_id', 1))
+            sock.connect((self.leader_host, leader_port))
             sock.sendall(json.dumps(msg).encode('utf-8'))
             response = sock.recv(65536).decode('utf-8')
             sock.close()
@@ -1192,10 +1216,10 @@ class StreamProcessTask:
     def _send_to_worker_rfs(self, rfs_filename: str, data: str) -> bool:
         """Send data to local worker for ReplicatedFS write."""
         try:
-            # Worker is on localhost at STREAM_PORT
+            # Worker is on localhost at the node's stream port
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10.0)
-            sock.connect(('localhost', STREAM_PORT))
+            sock.connect(('localhost', self.stream_port))
 
             msg = {
                 'type': 'WRITE_RFS',
