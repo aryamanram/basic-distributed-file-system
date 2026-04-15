@@ -1,0 +1,18 @@
+{
+    "nodes": [
+        {"id": 1, "ip": "127.0.0.1", "membership_port": 8081, "control_port": 9091, "rfs_port": 7001, "stream_port": 8001, "task_base_port": 8101},
+        {"id": 2, "ip": "127.0.0.1", "membership_port": 8082, "control_port": 9092, "rfs_port": 7002, "stream_port": 8002, "task_base_port": 8102},
+        {"id": 3, "ip": "127.0.0.1", "membership_port": 8083, "control_port": 9093, "rfs_port": 7003, "stream_port": 8003, "task_base_port": 8103},
+        {"id": 4, "ip": "127.0.0.1", "membership_port": 8084, "control_port": 9094, "rfs_port": 7004, "stream_port": 8004, "task_base_port": 8104},
+        {"id": 5, "ip": "127.0.0.1", "membership_port": 8085, "control_port": 9095, "rfs_port": 7005, "stream_port": 8005, "task_base_port": 8105}
+    ],
+    "introducer_id": 1,
+    "leader_id": 1,
+    "replication_factor": 3,
+    "max_tasks_per_stage": 10,
+    "gossip_interval": 0.5,
+    "pingack_interval": 0.5,
+    "failure_timeout": 15.0,
+    "suspicion_timeout": 10.0,
+    "cleanup_timeout": 10.0
+}
