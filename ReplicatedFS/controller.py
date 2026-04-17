@@ -30,8 +30,8 @@ def send_command(node_id, command, node_hosts):
     Send a command to a specific node and receive response.
     """
     ip, control_port = node_hosts[node_id]
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(60.0)  # Longer timeout for file operations
         sock.connect((ip, control_port))
 
@@ -40,7 +40,6 @@ def send_command(node_id, command, node_hosts):
 
         # Receive response
         response = sock.recv(65536).decode('utf-8')
-        sock.close()
 
         print(f"\n[Node-{node_id} ({ip}:{control_port})]")
         print(response)
@@ -54,6 +53,8 @@ def send_command(node_id, command, node_hosts):
     except Exception as e:
         print(f"\n[Node-{node_id}] Error: {e}")
         return None
+    finally:
+        sock.close()
 
 
 def print_help(max_node_id):
@@ -97,14 +98,13 @@ def check_node_status(node_hosts):
 
     for node_id in sorted(node_hosts.keys()):
         ip, control_port = node_hosts[node_id]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2.0)
             sock.connect((ip, control_port))
 
             sock.sendall("status".encode('utf-8'))
             response = sock.recv(1024).decode('utf-8')
-            sock.close()
 
             print(f"  Node-{node_id:2d} ({ip}:{control_port}): ONLINE - {response.strip()}")
         except socket.timeout:
@@ -113,6 +113,8 @@ def check_node_status(node_hosts):
             print(f"  Node-{node_id:2d} ({ip}:{control_port}): NOT RUNNING")
         except Exception as e:
             print(f"  Node-{node_id:2d} ({ip}:{control_port}): ERROR - {e}")
+        finally:
+            sock.close()
 
     print("-" * 60)
 

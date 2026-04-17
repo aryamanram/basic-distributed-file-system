@@ -32,8 +32,8 @@ def send_command(node_id: int, ip: str, control_port: int, command: str) -> None
 
     Uses a 10-byte length-prefix protocol to receive the full response.
     """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
         sock.connect((ip, control_port))
         sock.sendall(command.encode())
@@ -41,15 +41,15 @@ def send_command(node_id: int, ip: str, control_port: int, command: str) -> None
         header = recv_all(sock, 10)
         if not header:
             print(f"[node-{node_id}] No response")
-            sock.close()
             return
         resp_size = int(header.decode("utf-8"))
         response = recv_all(sock, resp_size).decode("utf-8")
 
-        sock.close()
         print(f"[node-{node_id}] {response}")
     except Exception as e:
         print(f"[node-{node_id}] Error: {e}")
+    finally:
+        sock.close()
 
 
 def main() -> None:

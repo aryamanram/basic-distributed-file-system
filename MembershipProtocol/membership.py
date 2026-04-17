@@ -220,6 +220,7 @@ class PingAckProtocol:
         self.thread: Optional[threading.Thread] = None
         self.ack_lock = threading.Lock()
         self.waiting_acks: Dict[str, float] = {}
+        self.suspicion_timers: Dict[str, threading.Timer] = {}
 
     def start(self) -> None:
         if self.running:
@@ -233,6 +234,10 @@ class PingAckProtocol:
         if not self.running:
             return
         self.running = False
+        # Cancel all pending suspicion timers
+        for timer in self.suspicion_timers.values():
+            timer.cancel()
+        self.suspicion_timers.clear()
         if self.thread:
             self.thread.join(timeout=1)
         self.service.logger.log("PROTOCOL: Stopped PingAck")
@@ -290,11 +295,14 @@ class PingAckProtocol:
         for host in expired:
             if self.service.suspicion_enabled:
                 self.service.membership.mark_suspected(host, source=f"{self.service.node_name}/ping")
-                threading.Timer(self.service.suspicion_timeout, self.suspect_to_fail, args=[host]).start()
+                timer = threading.Timer(self.service.suspicion_timeout, self.suspect_to_fail, args=[host])
+                self.suspicion_timers[host] = timer
+                timer.start()
             else:
                 self.service.membership.mark_failed(host)
 
     def suspect_to_fail(self, host: str) -> None:
+        self.suspicion_timers.pop(host, None)
         mem = self.service.membership.get_members()
         if host in mem and mem[host]["status"] == MemberStatus.SUSPECTED.value:
             self.service.membership.mark_failed(host)
@@ -745,16 +753,20 @@ class MembershipService:
         while self.running:
             try:
                 conn, _ = srv.accept()
-                cmd = conn.recv(8192).decode().strip()
-                resp = self.handle_command(cmd)
-                resp_data = resp.encode("utf-8")
-                header = f"{len(resp_data):010d}".encode("utf-8")
-                conn.sendall(header + resp_data)
-                conn.close()
+                try:
+                    cmd = conn.recv(8192).decode().strip()
+                    resp = self.handle_command(cmd)
+                    resp_data = resp.encode("utf-8")
+                    header = f"{len(resp_data):010d}".encode("utf-8")
+                    conn.sendall(header + resp_data)
+                except Exception as e:
+                    self.logger.log(f"ERROR: control: {e}")
+                finally:
+                    conn.close()
             except socket.timeout:
                 continue
             except Exception as e:
-                self.logger.log(f"ERROR: control: {e}")
+                self.logger.log(f"ERROR: control accept: {e}")
         srv.close()
 
     def handle_command(self, cmd: str) -> str:

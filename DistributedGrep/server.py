@@ -77,8 +77,8 @@ def handle_client(conn, addr, vm_config):
 
         response_data = json.dumps(response).encode('utf-8')
         size_header = f"{len(response_data):010d}".encode('utf-8')
-        conn.send(size_header)
-        conn.send(response_data)
+        conn.sendall(size_header)
+        conn.sendall(response_data)
 
     except Exception as e:
         print(f"Error handling client: {e}")

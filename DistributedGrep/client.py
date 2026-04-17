@@ -17,8 +17,8 @@ TIMEOUT = 720
 
 def query_server(vm_info, pattern, options):
     """Send grep request to a server and receive response."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT)
 
         port = vm_info.get('port', DEFAULT_PORT)
@@ -28,7 +28,7 @@ def query_server(vm_info, pattern, options):
             'pattern': pattern,
             'options': options
         }
-        sock.send(json.dumps(request).encode('utf-8'))
+        sock.sendall(json.dumps(request).encode('utf-8'))
 
         size_header = sock.recv(10)
         if not size_header:
@@ -42,8 +42,6 @@ def query_server(vm_info, pattern, options):
             if not chunk:
                 break
             response_data += chunk
-
-        sock.close()
 
         response = json.loads(response_data.decode('utf-8'))
         return response
@@ -62,6 +60,8 @@ def query_server(vm_info, pattern, options):
             'lines': [],
             'error': str(e)
         }
+    finally:
+        sock.close()
 
 
 def run_grep(pattern, options='', verbose=False):

@@ -89,8 +89,8 @@ class ReplicatedFSClientProxy:
 
     def get(self, rfs_filename: str, local_filename: str) -> bool:
         """Get a file from ReplicatedFS via the local worker."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(30.0)
             sock.connect(('localhost', self.stream_port))
 
@@ -120,8 +120,6 @@ class ReplicatedFSClientProxy:
                 except socket.timeout:
                     break
 
-            sock.close()
-
             if not chunks:
                 return False
 
@@ -138,11 +136,13 @@ class ReplicatedFSClientProxy:
         except Exception as e:
             self.logger.log(f"ReplicatedFS PROXY GET ERROR: {e}")
             return False
+        finally:
+            sock.close()
 
     def _send_rfs_request(self, operation: str, rfs_filename: str, data: str) -> bool:
         """Send a ReplicatedFS write request to the local worker."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(30.0)
             sock.connect(('localhost', self.stream_port))
 
@@ -156,7 +156,6 @@ class ReplicatedFSClientProxy:
 
             sock.sendall(json.dumps(msg).encode('utf-8'))
             response = sock.recv(65536).decode('utf-8')
-            sock.close()
 
             result = json.loads(response)
             return result.get('status') == 'success'
@@ -164,6 +163,8 @@ class ReplicatedFSClientProxy:
         except Exception as e:
             self.logger.log(f"ReplicatedFS PROXY {operation.upper()} ERROR: {e}")
             return False
+        finally:
+            sock.close()
 
 
 def get_timestamp() -> str:
@@ -570,6 +571,7 @@ class StreamProcessTask:
         # FIXED: Output sequence counter for deterministic output IDs
         # Maps input tuple_id -> next output sequence number
         self.output_seq_counter: Dict[str, int] = {}
+        self.output_seq_lock = threading.Lock()
 
         # Lock for processing tuples (prevents race conditions in exactly-once)
         self.processing_lock = threading.Lock()
@@ -741,18 +743,19 @@ class StreamProcessTask:
     
     def _send_to_leader(self, msg: dict) -> Optional[dict]:
         """Send message to leader."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10.0)
             leader_port = get_stream_port(_CONFIG.get('leader_id', 1))
             sock.connect((self.leader_host, leader_port))
             sock.sendall(json.dumps(msg).encode('utf-8'))
             response = sock.recv(65536).decode('utf-8')
-            sock.close()
             return json.loads(response)
         except Exception as e:
             self.logger.log(f"LEADER COMM ERROR: {e}")
             return None
+        finally:
+            sock.close()
     
     def _server_loop(self):
         """Main server loop to receive tuples."""
@@ -868,7 +871,8 @@ class StreamProcessTask:
                     start_seq = self.eo_tracker.get_next_output_seq(tuple_id)
                 else:
                     start_seq = 0
-                self.output_seq_counter[tuple_id] = start_seq
+                with self.output_seq_lock:
+                    self.output_seq_counter[tuple_id] = start_seq
 
                 for out_key, out_value in output_tuples:
                     success = self._forward_tuple(tuple_id, out_key, out_value)
@@ -876,8 +880,8 @@ class StreamProcessTask:
                         all_forwarded = False
 
             # Clean up sequence counter
-            if tuple_id in self.output_seq_counter:
-                del self.output_seq_counter[tuple_id]
+            with self.output_seq_lock:
+                self.output_seq_counter.pop(tuple_id, None)
 
             # Step 5: ONLY mark as processed AFTER forwarding succeeds
             # This ensures retries will re-process if forwarding failed
@@ -965,8 +969,9 @@ class StreamProcessTask:
 
         # FIXED: Create DETERMINISTIC output ID
         # This ID will be the same across retries, allowing duplicate detection
-        seq_num = self.output_seq_counter.get(source_tuple_id, 0)
-        self.output_seq_counter[source_tuple_id] = seq_num + 1
+        with self.output_seq_lock:
+            seq_num = self.output_seq_counter.get(source_tuple_id, 0)
+            self.output_seq_counter[source_tuple_id] = seq_num + 1
         output_id = f"{source_tuple_id}_{self.task_id}_out{seq_num}"
 
         tuple_msg = {
@@ -1008,15 +1013,14 @@ class StreamProcessTask:
     
     def _send_tuple_to_task(self, target: dict, msg: dict) -> bool:
         """Send tuple to a task and wait for ACK."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             sock.connect((target['hostname'], target['port']))
             sock.sendall(json.dumps(msg).encode('utf-8'))
 
             # Wait for ACK
             response = sock.recv(1024).decode('utf-8')
-            sock.close()
 
             if 'ack' in response:
                 return True
@@ -1024,6 +1028,8 @@ class StreamProcessTask:
         except Exception as e:
             self.logger.log(f"SEND ERROR to {target.get('hostname')}:{target.get('port')}: {e}")
             return False
+        finally:
+            sock.close()
     
     def _resend_pending_outputs_for_tuple(self, tuple_id: str):
         """
@@ -1215,9 +1221,8 @@ class StreamProcessTask:
 
     def _send_to_worker_rfs(self, rfs_filename: str, data: str) -> bool:
         """Send data to local worker for ReplicatedFS write."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            # Worker is on localhost at the node's stream port
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10.0)
             sock.connect(('localhost', self.stream_port))
 
@@ -1231,7 +1236,6 @@ class StreamProcessTask:
 
             sock.sendall(json.dumps(msg).encode('utf-8'))
             response = sock.recv(65536).decode('utf-8')
-            sock.close()
 
             result = json.loads(response)
             return result.get('status') == 'success'
@@ -1239,6 +1243,8 @@ class StreamProcessTask:
         except Exception as e:
             self.logger.log(f"WORKER RFS ERROR: {e}")
             return False
+        finally:
+            sock.close()
     
     def _rate_report_loop(self):
         """Report rate to leader every second."""

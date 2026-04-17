@@ -154,9 +154,13 @@ class StreamProcessLeader:
         self.rfs_client = ReplicatedFSClient(rfs_node)
         self.rfs_write_lock = threading.Lock()  # Lock for ReplicatedFS writes from tasks
 
+        # Track which ReplicatedFS files have been created (per-instance, not class-level)
+        self._rfs_files_created: set = set()
+        self._eo_rfs_files_created: set = set()
+
         self.run_id = f"{int(time.time())}"
         self.logger = StreamProcessLogger(vm_id, self.run_id, is_leader=True)
-        
+
         # Job state
         self.running = False
         self.job_running = False  # True while a job is actively processing
@@ -355,7 +359,8 @@ class StreamProcessLeader:
             if len(self.tasks) == 0 and self.job_running:
                 self.job_running = False
                 self.logger.log("JOB COMPLETE: All tasks finished")
-                self.logger.log(f"RUN END: Output written to ReplicatedFS:{self.job_config.get('rfs_dest', '')}")
+                rfs_dest = self.job_config.get('rfs_dest', '') if self.job_config else ''
+                self.logger.log(f"RUN END: Output written to ReplicatedFS:{rfs_dest}")
 
         return {'status': 'success'}
     
@@ -484,9 +489,6 @@ class StreamProcessLeader:
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
-    # Track which ReplicatedFS files have been created locally (to optimize create vs append)
-    _rfs_files_created: set = set()
-
     def _check_rfs_file_exists(self, rfs_filename: str) -> bool:
         """Check if a file exists in ReplicatedFS by attempting a GET."""
         try:
@@ -520,6 +522,7 @@ class StreamProcessLeader:
             return {'status': 'error', 'message': 'Missing filename or data'}
 
         with self.rfs_write_lock:
+            temp_file = None
             try:
                 # Write data to temp file
                 temp_file = f"/tmp/rfs_write_{task_id}_{time.time()}.tmp"
@@ -528,7 +531,7 @@ class StreamProcessLeader:
                     f.write(data)
 
                 # Determine whether to CREATE or APPEND
-                if rfs_filename in StreamProcessLeader._rfs_files_created:
+                if rfs_filename in self._rfs_files_created:
                     # We've written to this file before - just append
                     self.rfs_client.append(temp_file, rfs_filename)
                     self.logger.log(f"RFS APPEND: {rfs_filename} from task {task_id}")
@@ -544,7 +547,7 @@ class StreamProcessLeader:
                         self.logger.log(f"RFS CREATE: {rfs_filename} from task {task_id}")
 
                     # Mark as created locally for future writes
-                    StreamProcessLeader._rfs_files_created.add(rfs_filename)
+                    self._rfs_files_created.add(rfs_filename)
 
                 # Cleanup temp file
                 os.remove(temp_file)
@@ -554,14 +557,12 @@ class StreamProcessLeader:
             except Exception as e:
                 self.logger.log(f"RFS WRITE ERROR: {rfs_filename} - {e}")
                 # Try to cleanup temp file
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
+                if temp_file:
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
                 return {'status': 'error', 'message': str(e)}
-
-    # Track which EO log files have been created in ReplicatedFS
-    _eo_rfs_files_created: set = set()
 
     def _handle_write_rfs_eo(self, msg: dict) -> dict:
         """
@@ -585,6 +586,7 @@ class StreamProcessLeader:
             return {'status': 'error', 'message': 'Missing filename or data'}
 
         with self.rfs_write_lock:
+            temp_file = None
             try:
                 # Write data to temp file
                 temp_file = f"/tmp/rfs_eo_{task_id}_{time.time()}.tmp"
@@ -595,11 +597,11 @@ class StreamProcessLeader:
                 if operation == 'create':
                     # Explicit create request
                     self.rfs_client.create(temp_file, rfs_filename)
-                    StreamProcessLeader._eo_rfs_files_created.add(rfs_filename)
+                    self._eo_rfs_files_created.add(rfs_filename)
                     self.logger.log(f"RFS EO CREATE: {rfs_filename} from task {task_id}")
                 else:
                     # Append operation - determine if file exists
-                    if rfs_filename in StreamProcessLeader._eo_rfs_files_created:
+                    if rfs_filename in self._eo_rfs_files_created:
                         # We've written to this file before - just append
                         self.rfs_client.append(temp_file, rfs_filename)
                         self.logger.log(f"RFS EO APPEND: {rfs_filename} from task {task_id}")
@@ -611,7 +613,7 @@ class StreamProcessLeader:
                         else:
                             self.rfs_client.create(temp_file, rfs_filename)
                             self.logger.log(f"RFS EO CREATE (new): {rfs_filename} from task {task_id}")
-                        StreamProcessLeader._eo_rfs_files_created.add(rfs_filename)
+                        self._eo_rfs_files_created.add(rfs_filename)
 
                 # Cleanup temp file
                 os.remove(temp_file)
@@ -620,10 +622,11 @@ class StreamProcessLeader:
 
             except Exception as e:
                 self.logger.log(f"RFS EO WRITE ERROR: {rfs_filename} - {e}")
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
+                if temp_file:
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
                 return {'status': 'error', 'message': str(e)}
 
     def _handle_read_rfs_eo(self, msg: dict) -> dict:
@@ -667,8 +670,8 @@ class StreamProcessLeader:
 
     def _send_to_worker(self, hostname: str, msg: dict, timeout: float = 10.0) -> Optional[dict]:
         """Send message to a worker node."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
             sock.connect((hostname, get_stream_port_by_host(hostname)))
             sock.sendall(json.dumps(msg).encode('utf-8'))
@@ -685,7 +688,6 @@ class StreamProcessLeader:
                     try:
                         full_response = b''.join(chunks).decode('utf-8')
                         result = json.loads(full_response)
-                        sock.close()
                         return result
                     except json.JSONDecodeError:
                         # Incomplete JSON, keep reading
@@ -693,7 +695,6 @@ class StreamProcessLeader:
                 except socket.timeout:
                     break
 
-            sock.close()
             if chunks:
                 full_response = b''.join(chunks).decode('utf-8')
                 return json.loads(full_response)
@@ -701,6 +702,8 @@ class StreamProcessLeader:
         except Exception as e:
             self.logger.log(f"LEADER ERROR sending to {hostname}: {e}")
             return None
+        finally:
+            sock.close()
 
     def _cleanup_existing_tasks(self):
         """Kill all existing tasks from previous jobs to free up ports."""
@@ -756,7 +759,8 @@ class StreamProcessLeader:
                 self.logger.log(f"CLEANUP: Cleared {old_rate_count} stale task rate entries")
 
         # Clear ReplicatedFS files created tracking - CRITICAL for new jobs to CREATE not APPEND
-        StreamProcessLeader._rfs_files_created.clear()
+        self._rfs_files_created.clear()
+        self._eo_rfs_files_created.clear()
 
         # Give processes time to terminate and release ports
         time.sleep(1.0)
@@ -1211,19 +1215,18 @@ class StreamProcessLeader:
     def _send_tuple_with_ack(self, target: dict, msg: dict) -> bool:
         """
         FIXED: Send a tuple to a task and wait for ACK.
-        
+
         Returns True if ACK received, False otherwise.
         """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             sock.connect((target['hostname'], target['port']))
             sock.sendall(json.dumps(msg).encode('utf-8'))
-            
+
             # Wait for ACK
             response = sock.recv(1024).decode('utf-8')
-            sock.close()
-            
+
             if 'ack' in response.lower():
                 return True
             return False
@@ -1233,17 +1236,20 @@ class StreamProcessLeader:
         except Exception as e:
             self.logger.log(f"SOURCE: Error sending to {target.get('task_id', target['hostname'])}: {e}")
             return False
+        finally:
+            sock.close()
     
     def _send_tuple(self, hostname: str, port: int, msg: dict):
         """Send a tuple to a task (fire-and-forget, for non-exactly-once mode)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             sock.connect((hostname, port))
             sock.sendall(json.dumps(msg).encode('utf-8'))
-            sock.close()
-        except Exception as e:
+        except Exception:
             pass  # Silently ignore in fire-and-forget mode
+        finally:
+            sock.close()
     
     def _monitor_loop(self):
         """Monitor tasks for failures and autoscaling."""
@@ -1651,6 +1657,10 @@ class StreamProcessWorker:
         self.server_socket: Optional[socket.socket] = None
         self.task_processes: Dict[str, int] = {}  # task_id -> pid
         self.rfs_write_lock = threading.Lock()  # Lock for ReplicatedFS writes
+
+        # Track which ReplicatedFS files have been created (per-instance, not class-level)
+        self._rfs_files_created: set = set()
+        self._eo_rfs_files_created: set = set()
     
     def start(self):
         """Start the worker server."""
@@ -1826,9 +1836,6 @@ class StreamProcessWorker:
             self.logger.log(f"GET_OUTPUT ERROR: {task_id} - {e}")
             return {'status': 'error', 'message': str(e)}
 
-    # Track which ReplicatedFS files have been created locally (to optimize create vs append)
-    _rfs_files_created: set = set()
-
     def _check_rfs_file_exists(self, rfs_filename: str) -> bool:
         """Check if a file exists in ReplicatedFS by attempting a GET."""
         try:
@@ -1862,6 +1869,7 @@ class StreamProcessWorker:
             return {'status': 'error', 'message': 'Missing filename or data'}
 
         with self.rfs_write_lock:
+            temp_file = None
             try:
                 # Write data to temp file
                 temp_file = f"/tmp/rfs_write_{task_id}_{time.time()}.tmp"
@@ -1875,7 +1883,7 @@ class StreamProcessWorker:
                         f.write(bytes(data))
 
                 # Determine whether to CREATE or APPEND
-                if rfs_filename in StreamProcessWorker._rfs_files_created:
+                if rfs_filename in self._rfs_files_created:
                     # We've written to this file before - just append
                     self.rfs_client.append(temp_file, rfs_filename)
                     self.logger.log(f"RFS APPEND: {rfs_filename} from task {task_id}")
@@ -1891,7 +1899,7 @@ class StreamProcessWorker:
                         self.logger.log(f"RFS CREATE: {rfs_filename} from task {task_id}")
 
                     # Mark as created locally for future writes
-                    StreamProcessWorker._rfs_files_created.add(rfs_filename)
+                    self._rfs_files_created.add(rfs_filename)
 
                 # Cleanup temp file
                 os.remove(temp_file)
@@ -1900,15 +1908,12 @@ class StreamProcessWorker:
 
             except Exception as e:
                 self.logger.log(f"RFS WRITE ERROR: {rfs_filename} - {e}")
-                # Try to cleanup temp file
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
+                if temp_file:
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
                 return {'status': 'error', 'message': str(e)}
-
-    # Track which EO log files have been created in ReplicatedFS
-    _eo_rfs_files_created: set = set()
 
     def _handle_write_rfs_eo(self, msg: dict) -> dict:
         """
@@ -1932,6 +1937,7 @@ class StreamProcessWorker:
             return {'status': 'error', 'message': 'Missing filename or data'}
 
         with self.rfs_write_lock:
+            temp_file = None
             try:
                 # Write data to temp file
                 temp_file = f"/tmp/rfs_eo_{task_id}_{time.time()}.tmp"
@@ -1942,11 +1948,11 @@ class StreamProcessWorker:
                 if operation == 'create':
                     # Explicit create request
                     self.rfs_client.create(temp_file, rfs_filename)
-                    StreamProcessWorker._eo_rfs_files_created.add(rfs_filename)
+                    self._eo_rfs_files_created.add(rfs_filename)
                     self.logger.log(f"RFS EO CREATE: {rfs_filename} from task {task_id}")
                 else:
                     # Append operation - determine if file exists
-                    if rfs_filename in StreamProcessWorker._eo_rfs_files_created:
+                    if rfs_filename in self._eo_rfs_files_created:
                         # We've written to this file before - just append
                         self.rfs_client.append(temp_file, rfs_filename)
                         self.logger.log(f"RFS EO APPEND: {rfs_filename} from task {task_id}")
@@ -1958,7 +1964,7 @@ class StreamProcessWorker:
                         else:
                             self.rfs_client.create(temp_file, rfs_filename)
                             self.logger.log(f"RFS EO CREATE (new): {rfs_filename} from task {task_id}")
-                        StreamProcessWorker._eo_rfs_files_created.add(rfs_filename)
+                        self._eo_rfs_files_created.add(rfs_filename)
 
                 # Cleanup temp file
                 os.remove(temp_file)
@@ -1967,10 +1973,11 @@ class StreamProcessWorker:
 
             except Exception as e:
                 self.logger.log(f"RFS EO WRITE ERROR: {rfs_filename} - {e}")
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
+                if temp_file:
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
                 return {'status': 'error', 'message': str(e)}
 
     def _handle_read_rfs_eo(self, msg: dict) -> dict:

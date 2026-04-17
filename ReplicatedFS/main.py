@@ -455,8 +455,8 @@ def control_server_loop(client: ReplicatedFSClient, control_port: int, logger):
     """
     Run a control server that listens for commands from the controller.
     """
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(('', control_port))
         srv.listen(8)
@@ -476,6 +476,8 @@ def control_server_loop(client: ReplicatedFSClient, control_port: int, logger):
 
     except Exception as e:
         logger.log(f"CONTROL ERROR: Server: {e}")
+    finally:
+        srv.close()
 
 
 def handle_control_connection(conn, addr, client, logger):

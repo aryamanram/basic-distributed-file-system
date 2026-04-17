@@ -126,8 +126,8 @@ class NetworkManager:
         Send a message to a target node and wait for response.
         Returns the response or None on failure.
         """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
 
             sock.connect((target_host, target_port))
@@ -142,8 +142,6 @@ class NetworkManager:
                 return None
 
             response = deserialize_message(response_data)
-
-            sock.close()
             return response
 
         except socket.timeout:
@@ -152,6 +150,8 @@ class NetworkManager:
         except Exception as e:
             self.logger.log(f"NETWORK ERROR: Send to {target_host}:{target_port}: {e}")
             return None
+        finally:
+            sock.close()
 
     def send_message_async(self, target_host: str, target_port: int,
                           message: Dict[str, Any], callback: Optional[Callable] = None):

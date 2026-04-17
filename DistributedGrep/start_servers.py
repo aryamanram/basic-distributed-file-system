@@ -37,16 +37,16 @@ def start_servers():
             # Windows: use CREATE_NEW_PROCESS_GROUP
             process = subprocess.Popen(
                 [sys.executable, 'server.py', '--vm-id', str(vm_id)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             # Unix: use standard approach
             process = subprocess.Popen(
                 [sys.executable, 'server.py', '--vm-id', str(vm_id)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
 

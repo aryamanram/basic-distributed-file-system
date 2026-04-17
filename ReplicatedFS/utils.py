@@ -79,7 +79,10 @@ def recv_sized_message(sock) -> Optional[bytes]:
     if not size_header:
         return None
 
-    size = int(size_header.decode('utf-8'))
+    try:
+        size = int(size_header.decode('utf-8'))
+    except ValueError:
+        return None
     data = b''
     while len(data) < size:
         chunk = sock.recv(min(4096, size - len(data)))
